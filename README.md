@@ -154,7 +154,7 @@ export VITASDK=/opt/vitasdk
 scripts/psv-dev.sh build
 ```
 
-The resulting package is written to `build-psv/Moonlight.vpk`. For installing the first VPK, deploying later builds, capturing PrincessLog output, and checking crash dumps, see the [PS Vita development guide](docs/psv-development.md).
+The resulting package is written to `build/psvita/Moonlight.vpk`. For installing the first VPK, deploying later builds, capturing PrincessLog output, and checking crash dumps, see the [PS Vita development guide](docs/psv-development.md).
 
 ### PC (Windows/Linux/MacOS)
 

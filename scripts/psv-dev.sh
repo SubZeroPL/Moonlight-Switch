@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 PSV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PSV_PROJECT_ROOT="$(cd "${PSV_SCRIPT_DIR}/.." && pwd)"
-PSV_BUILD_DIR="${PSV_BUILD_DIR:-${PSV_PROJECT_ROOT}/build-psv}"
+PSV_BUILD_DIR="${PSV_BUILD_DIR:-${PSV_PROJECT_ROOT}/build/psvita}"
 PSV_BUILD_TYPE="${PSV_BUILD_TYPE:-Release}"
 PSV_IP="${PSV_IP:-192.168.1.209}"
 PSV_TITLE_ID="${PSV_TITLE_ID:-MNTL00000}"
@@ -38,7 +38,7 @@ psv_usage() {
 Usage: scripts/psv-dev.sh [doctor|build|install|cycle|logs|parse-crash]
 
   doctor       Check the local toolchain and Vita development services.
-  build        Configure and build build-psv/Moonlight.vpk.
+  build        Configure and build build/psvita/Moonlight.vpk.
   install      Build and upload the VPK to ux0:/data/Moonlight.vpk.
   cycle        Build, deploy eboot.bin, launch, and verify healthy logs.
   logs         Listen for PrincessLog output on the configured log port.

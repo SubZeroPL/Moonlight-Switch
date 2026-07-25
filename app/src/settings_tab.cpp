@@ -87,7 +87,10 @@ SettingsTab::SettingsTab() {
     this->inflateFromXMLRes("xml/tabs/settings.xml");
 
     std::vector<std::string> resolutions = {
-        "settings/resolution_native"_i18n, "360p", "480p", "540p", "720p", "1080p", "1440p"
+        "settings/resolution_native"_i18n, "360p", "480p", "540p", "720p", "1080p",
+#if !defined(__PSV__)
+        "1440p",
+#endif
     };
     resolution->setText("settings/resolution"_i18n);
     resolution->setData(resolutions);
@@ -98,12 +101,17 @@ SettingsTab::SettingsTab() {
         GET_SETTINGS(resolution, 540, 3);
         GET_SETTINGS(resolution, 720, 4);
         GET_SETTINGS(resolution, 1080, 5);
+#if !defined(__PSV__)
         GET_SETTINGS(resolution, 1440, 6);
+#endif
         DEFAULT;
     }
 
     std::vector<std::string> nativeResolutionScales = {
-        "0.5x", "0.75x", "1.0x", "2.0x"
+        "0.5x", "0.75x", "1.0x",
+#if !defined(__PSV__)
+        "2.0x",
+#endif
     };
     resolutionScale->setText("settings/resolution_scale"_i18n);
     resolutionScale->setData(nativeResolutionScales);
@@ -111,7 +119,9 @@ SettingsTab::SettingsTab() {
         GET_SETTINGS(resolutionScale, 50, 0);
         GET_SETTINGS(resolutionScale, 75, 1);
         GET_SETTINGS(resolutionScale, 100, 2);
+#if !defined(__PSV__)
         GET_SETTINGS(resolutionScale, 200, 3);
+#endif
         default:
             resolutionScale->setSelection(2);
             break;
@@ -121,7 +131,9 @@ SettingsTab::SettingsTab() {
             SET_SETTING(0, set_native_resolution_scale(50));
             SET_SETTING(1, set_native_resolution_scale(75));
             SET_SETTING(2, set_native_resolution_scale(100));
+#if !defined(__PSV__)
             SET_SETTING(3, set_native_resolution_scale(200));
+#endif
             DEFAULT;
         }
     });
@@ -213,36 +225,61 @@ SettingsTab::SettingsTab() {
             SET_SETTING(3, set_resolution(540));
             SET_SETTING(4, set_resolution(720));
             SET_SETTING(5, set_resolution(1080));
+#if !defined(__PSV__)
             SET_SETTING(6, set_resolution(1440));
+#endif
             DEFAULT;
         }
         updateNativeResolutionScaleVisibility();
     });
 
+#if defined(__PSV__)
     std::vector<std::string> fpss = {
-        "30", 
-        "40", 
-        "60", 
-// #if !defined(PLATFORM_SWITCH)
+        "24",
+        "30",
+        "40",
+        "50",
+        "60",
+    };
+#else
+    std::vector<std::string> fpss = {
+        "30",
+        "40",
+        "60",
         "120",
-// #endif
-        };
+    };
+#endif
     fps->setText("settings/fps"_i18n);
     fps->setData(fpss);
-    int i = 0;
     switch (Settings::instance().fps()) {
+#if defined(__PSV__)
+        GET_SETTINGS(fps, 24, 0);
+        GET_SETTINGS(fps, 30, 1);
+        GET_SETTINGS(fps, 40, 2);
+        GET_SETTINGS(fps, 50, 3);
+        GET_SETTINGS(fps, 60, 4);
+#else
         GET_SETTINGS(fps, 30, 0);
         GET_SETTINGS(fps, 40, 1);
         GET_SETTINGS(fps, 60, 2);
         GET_SETTINGS(fps, 120, 3);
+#endif
         DEFAULT;
     }
     fps->getEvent()->subscribe([](int selected) {
         switch (selected) {
+#if defined(__PSV__)
+            SET_SETTING(0, set_fps(24));
+            SET_SETTING(1, set_fps(30));
+            SET_SETTING(2, set_fps(40));
+            SET_SETTING(3, set_fps(50));
+            SET_SETTING(4, set_fps(60));
+#else
             SET_SETTING(0, set_fps(30));
             SET_SETTING(1, set_fps(40));
             SET_SETTING(2, set_fps(60));
             SET_SETTING(3, set_fps(120));
+#endif
             DEFAULT;
         }
     });
@@ -270,7 +307,9 @@ SettingsTab::SettingsTab() {
 
     std::vector<VideoCodec> supportedCodecs = {
         H264,
+#if !defined(__PSV__)
         H265,
+#endif
     };
 
     std::vector<std::string> supportedCodecNames;
@@ -303,7 +342,9 @@ SettingsTab::SettingsTab() {
 
     hwDecoding->setEnabled(false);
 
-#if defined(PLATFORM_SWITCH)
+#if defined(__PSV__)
+    const float mbpsMaxLimit = 20000;
+#elif defined(PLATFORM_SWITCH)
     const float mbpsMaxLimit = 100000;
 #else
     const float mbpsMaxLimit = 150000;

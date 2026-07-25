@@ -330,7 +330,11 @@ class Settings : public Singleton<Settings> {
     int m_resolution = 720;
     int m_native_resolution_scale = 100;
     int m_fps = 60;
+#ifdef __PSV__
+    VideoCodec m_video_codec = H264;
+#else
     VideoCodec m_video_codec = H265;
+#endif
 #ifdef __SWITCH__
     AudioBackend m_audio_backend = AUDREN;
 #else
