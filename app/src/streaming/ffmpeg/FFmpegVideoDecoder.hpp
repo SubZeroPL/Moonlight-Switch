@@ -7,6 +7,7 @@
 #include "IFFmpegVideoDecoder.hpp"
 #include "AVFrameHolder.hpp"
 #include "FFmpegVideoDecoderPlatformHelpers.hpp"
+#include "FFmpegVideoDecoderLinuxHelpers.hpp"
 
 class FFmpegVideoDecoder : public IFFmpegVideoDecoder {
   public:
@@ -28,6 +29,9 @@ class FFmpegVideoDecoder : public IFFmpegVideoDecoder {
                                   bool enable_decoder_threads);
     int open_decoder();
     int finalize_decoder_setup();
+  #if defined(__linux__) && defined(PLATFORM_DESKTOP)
+    void mark_linux_hardware_failure(const char* operation, int error);
+  #endif
   #if defined(PLATFORM_ANDROID)
     bool should_delay_android_h264_open() const;
     int prepare_android_h264_extradata(PDECODE_UNIT decode_unit);
@@ -75,6 +79,10 @@ class FFmpegVideoDecoder : public IFFmpegVideoDecoder {
     bool m_use_zero_copy_holder = false;
 #if defined(PLATFORM_ANDROID)
     ffmpeg::decoder::AndroidMediaCodecState m_android_mediacodec;
+#endif
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+    ffmpeg::decoder::LinuxHardwareState m_linux_hardware;
+    bool m_linux_hardware_failed = false;
 #endif
 #if defined(_WIN32) && defined(USE_D3D11_RENDERER)
   ffmpeg::decoder::D3D11State m_d3d11;

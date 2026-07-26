@@ -172,6 +172,12 @@ make -C build/pc -j$(nproc)
 
 Also, please note that the `resources` folder must be available in the working directory, otherwise the program will fail to find the shaders.
 
+On Linux, enabling **Use hardware decoding** makes the FFmpeg decoder try
+VA-API, CUDA, and VDPAU in that order. The selected backend decodes into GPU
+surfaces and copies NV12, P010, or YUV420P frames back for the OpenGL renderer.
+If no compatible device or driver is available, Moonlight automatically falls
+back to software decoding.
+
 #### Windows (MSYS2)
 
 Windows desktop builds are supported through MSYS2 system packages for both x64 and ARM64.

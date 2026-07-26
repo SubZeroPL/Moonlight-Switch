@@ -17,6 +17,7 @@
 
 extern "C" {
 #include <libavutil/hwcontext.h>
+#include <libavutil/pixdesc.h>
 }
 
 // Disables the deblocking filter at the cost of image quality
@@ -82,6 +83,10 @@ int FFmpegVideoDecoder::configure_decoder_context(bool enable_hw_decode,
 
 #if defined(USE_D3D11_RENDERER)
         ffmpeg::decoder::configureD3D11DecoderContext(m_d3d11, m_decoder_context);
+#endif
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+        ffmpeg::decoder::configureLinuxDecoderContext(
+            m_linux_hardware, m_decoder_context);
 #endif
     }
 
@@ -214,6 +219,32 @@ int FFmpegVideoDecoder::open_decoder() {
     }
 #endif
 
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+    if (err < 0 && m_hw_decode_active) {
+        char error[AV_ERROR_MAX_STRING_SIZE] = {0};
+        brls::Logger::warning(
+            "FFmpeg: Couldn't open the Linux {} hardware decoder - {}. "
+            "Retrying with software decoding",
+            ffmpeg::decoder::linuxHardwareDeviceName(m_linux_hardware),
+            av_make_error_string(error, sizeof(error), err));
+
+        av_buffer_unref(&hw_device_ctx);
+        ffmpeg::decoder::resetLinuxHardwareState(m_linux_hardware);
+        m_hw_decode_active = false;
+        m_use_decoder_threads =
+            m_decoder_threads_setting > 1 && m_supports_slice_threading;
+        m_use_low_delay =
+            (m_perf_level & LOW_LATENCY_DECODE) && !m_use_decoder_threads;
+
+        err = configure_decoder_context(
+            false, m_use_low_delay, m_use_decoder_threads);
+        if (err >= 0) {
+            log_decoder_attempt();
+            err = avcodec_open2(m_decoder_context, m_decoder, nullptr);
+        }
+    }
+#endif
+
     if (err < 0) {
         char error[512];
         av_strerror(err, error, sizeof(error));
@@ -295,6 +326,25 @@ int FFmpegVideoDecoder::finalize_decoder_setup() {
     return 0;
 }
 
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+void FFmpegVideoDecoder::mark_linux_hardware_failure(
+    const char* operation, int error) {
+    if (!m_hw_decode_active ||
+        !m_linux_hardware.hardwareFormatSelected) {
+        return;
+    }
+
+    char message[AV_ERROR_MAX_STRING_SIZE] = {0};
+    brls::Logger::warning(
+        "FFmpeg: Linux {} hardware decoding failed while {}: {}. "
+        "The next decoder setup will use software decoding",
+        ffmpeg::decoder::linuxHardwareDeviceName(m_linux_hardware),
+        operation,
+        av_make_error_string(message, sizeof(message), error));
+    m_linux_hardware_failed = true;
+}
+#endif
+
 #if defined(PLATFORM_ANDROID)
 bool FFmpegVideoDecoder::should_delay_android_h264_open() const {
     return m_using_android_mediacodec_decoder && m_hw_decode_active &&
@@ -346,6 +396,9 @@ int FFmpegVideoDecoder::setup(int video_format, int width, int height,
 #endif
 #if defined(_WIN32) && defined(USE_D3D11_RENDERER)
     ffmpeg::decoder::resetD3D11State(m_d3d11);
+#endif
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+    ffmpeg::decoder::resetLinuxHardwareState(m_linux_hardware);
 #endif
 
     std::string format;
@@ -456,6 +509,7 @@ int FFmpegVideoDecoder::setup(int video_format, int width, int height,
 
     int err = 0;
 
+#if !defined(__linux__) || !defined(PLATFORM_DESKTOP)
     AVHWDeviceType hwType = AV_HWDEVICE_TYPE_NONE;
 #if defined(PLATFORM_SWITCH)
     hwType = AV_HWDEVICE_TYPE_NVTEGRA;
@@ -468,7 +522,30 @@ int FFmpegVideoDecoder::setup(int video_format, int width, int height,
 #elif defined(PLATFORM_APPLE)
     hwType = AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
 #endif
+#endif
 
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+    if (Settings::instance().use_hw_decoding() &&
+        !m_linux_hardware_failed) {
+        err = ffmpeg::decoder::initializeLinuxHardwareDevice(
+            m_linux_hardware, m_decoder, hw_device_ctx);
+        if (err < 0) {
+            char error[AV_ERROR_MAX_STRING_SIZE] = {0};
+            brls::Logger::info(
+                "FFmpeg: Linux hardware decoding unavailable; continuing "
+                "with software decoding ({})",
+                av_make_error_string(error, sizeof(error), err));
+        } else {
+            m_hw_decode_active = hw_device_ctx != nullptr;
+        }
+    } else if (m_linux_hardware_failed) {
+        brls::Logger::warning(
+            "FFmpeg: Linux hardware decoding is disabled for this stream "
+            "after an earlier decoder failure");
+    } else {
+        brls::Logger::info("FFmpeg: Linux hardware decoding disabled");
+    }
+#else
     if (Settings::instance().use_hw_decoding() && hwType != AV_HWDEVICE_TYPE_NONE) {
 #if defined(PLATFORM_ANDROID)
         if (hwType == AV_HWDEVICE_TYPE_MEDIACODEC) {
@@ -503,6 +580,7 @@ int FFmpegVideoDecoder::setup(int video_format, int width, int height,
     } else {
         brls::Logger::warning("FFmpeg: HW decoding disabled or unsupported by Platform");
     }
+#endif
 
 #if defined(__PSV__)
     // h264_vita is internally driven by sceVideodec and does not support
@@ -579,6 +657,9 @@ void FFmpegVideoDecoder::cleanup() {
 
 #if defined(PLATFORM_ANDROID)
     ffmpeg::decoder::cleanupAndroidMediaCodecState(m_android_mediacodec);
+#endif
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+    ffmpeg::decoder::resetLinuxHardwareState(m_linux_hardware);
 #endif
 
     if (m_frames) {
@@ -804,6 +885,9 @@ int FFmpegVideoDecoder::decode(char* indata, int inlen) {
     }
 
     if (err != 0) {
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+        mark_linux_hardware_failure("submitting a packet", err);
+#endif
         char error[512];
         av_strerror(err, error, sizeof(error));
         brls::Logger::error("FFmpeg: Decode failed - {}", error);
@@ -865,7 +949,7 @@ int FFmpegVideoDecoder::get_frame(bool native_frame, AVFrame** frame) {
     }
 
 #if !defined(PLATFORM_ANDROID) && !defined(BOREALIS_USE_DEKO3D) && !defined(USE_METAL_RENDERER)
-    if (hw_device_ctx && !m_use_zero_copy_holder) {
+    if (m_hw_decode_active && !m_use_zero_copy_holder) {
         // For HW->SW transfer path we decode into a temporary hardware frame.
         av_frame_unref(resultFrame);
         decodeFrame = tmp_frame;
@@ -881,6 +965,9 @@ int FFmpegVideoDecoder::get_frame(bool native_frame, AVFrame** frame) {
         }
 
         char a[AV_ERROR_MAX_STRING_SIZE] = { 0 };
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+        mark_linux_hardware_failure("receiving a frame", err);
+#endif
         brls::Logger::error("FFmpeg: Error receiving frame with error {}",  av_make_error_string(a, AV_ERROR_MAX_STRING_SIZE, err));
         if (m_use_zero_copy_holder) {
             AVFrameHolder::instance().recycleWriteFrame(resultFrame);
@@ -888,7 +975,14 @@ int FFmpegVideoDecoder::get_frame(bool native_frame, AVFrame** frame) {
         return err;
     }
 
-    if (hw_device_ctx) {
+    const AVPixFmtDescriptor* decodedFormat =
+        av_pix_fmt_desc_get(static_cast<AVPixelFormat>(decodeFrame->format));
+    const bool hardwareBackedFrame =
+        decodeFrame->hw_frames_ctx != nullptr ||
+        (decodedFormat != nullptr &&
+         (decodedFormat->flags & AV_PIX_FMT_FLAG_HWACCEL) != 0);
+
+    if (hardwareBackedFrame) {
 #if defined(BOREALIS_USE_DEKO3D) || defined(USE_METAL_RENDERER) || defined(PLATFORM_ANDROID)
         // Keep hardware-backed frame references per queue slot.
         resultFrame = decodeFrame;
@@ -905,6 +999,19 @@ int FFmpegVideoDecoder::get_frame(bool native_frame, AVFrame** frame) {
             av_frame_copy_props(resultFrame, decodeFrame);
         }
 #else
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+        if ((err = ffmpeg::decoder::prepareLinuxHardwareTransfer(
+                 m_linux_hardware, resultFrame, decodeFrame,
+                 m_video_format)) < 0) {
+            char a[AV_ERROR_MAX_STRING_SIZE] = {0};
+            mark_linux_hardware_failure(
+                "selecting a copy-back pixel format", err);
+            brls::Logger::error(
+                "FFmpeg: Error preparing Linux hardware frame transfer: {}",
+                av_make_error_string(a, AV_ERROR_MAX_STRING_SIZE, err));
+            return err;
+        }
+#endif
 #if defined(PLATFORM_SWITCH) && !defined(BOREALIS_USE_DEKO3D)
         for (int i = 0; i < 2; ++i) {
             if (((uintptr_t)resultFrame->data[i] & 0xff) || (resultFrame->linesize[i] & 0xff)) {
@@ -917,6 +1024,10 @@ int FFmpegVideoDecoder::get_frame(bool native_frame, AVFrame** frame) {
         // Copy hardware frame into software frame
         if ((err = av_hwframe_transfer_data(resultFrame, decodeFrame, 0)) < 0) {
             char a[AV_ERROR_MAX_STRING_SIZE] = { 0 };
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+            mark_linux_hardware_failure(
+                "copying a hardware frame to system memory", err);
+#endif
             brls::Logger::error("FFmpeg: Error transferring the data to system memory with error {}",  av_make_error_string(a, AV_ERROR_MAX_STRING_SIZE, err));
             return err;
         }
@@ -924,7 +1035,20 @@ int FFmpegVideoDecoder::get_frame(bool native_frame, AVFrame** frame) {
         av_frame_copy_props(resultFrame, decodeFrame);
 #endif
     } else {
-        resultFrame = decodeFrame;
+        if (decodeFrame != resultFrame) {
+            av_frame_unref(resultFrame);
+            av_frame_move_ref(resultFrame, decodeFrame);
+        }
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+        if (m_hw_decode_active &&
+            m_linux_hardware.softwareFallbackSelected) {
+            brls::Logger::warning(
+                "FFmpeg: Linux hardware format negotiation fell back to "
+                "software decoding");
+            m_hw_decode_active = false;
+            av_buffer_unref(&hw_device_ctx);
+        }
+#endif
     }
 
     if (!m_use_zero_copy_holder) {

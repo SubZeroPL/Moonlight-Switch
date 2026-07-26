@@ -340,7 +340,11 @@ SettingsTab::SettingsTab() {
     hwDecoding->init("settings/use_hw_decoding"_i18n, Settings::instance().use_hw_decoding(),
                      [](bool value) { Settings::instance().set_use_hw_decoding(value); });
 
+#if defined(__linux__) && defined(PLATFORM_DESKTOP)
+    hwDecoding->setEnabled(true);
+#else
     hwDecoding->setEnabled(false);
+#endif
 
 #if defined(__PSV__)
     const float mbpsMaxLimit = 20000;

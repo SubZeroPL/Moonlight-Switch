@@ -10,6 +10,7 @@
 #include "Singleton.hpp"
 #include "keyboard_view.hpp"
 #include <borealis.hpp>
+#include <chrono>
 #include <optional>
 
 // Moonlight ready gamepad
@@ -61,18 +62,31 @@ class MoonlightInputManager : public Singleton<MoonlightInputManager> {
     static void rightMouseClick();
 
   private:
+    enum class DesktopScrollAxis {
+        None,
+        Horizontal,
+        Vertical,
+    };
+
     RumbleValues rumbleCache[GAMEPADS_MAX];
     GamepadState lastGamepadStates[GAMEPADS_MAX];
     brls::ControllerButton mappingButtons[brls::_BUTTON_MAX];
     std::optional<brls::PanGestureStatus> panStatus;
     std::map<uint32_t, bool> activeTouchIDs;
     brls::Point desktopMouseRemainder = {0, 0};
+    brls::Point desktopScrollRemainder = {0, 0};
+    float pendingHorizontalScroll = 0;
+    unsigned pendingHorizontalScrollEvents = 0;
+    DesktopScrollAxis desktopScrollAxis = DesktopScrollAxis::None;
+    std::chrono::steady_clock::time_point lastDesktopScrollEvent;
     bool inputDropped = false;
     bool inputEnabled = true;
 
     brls::ControllerState mapController(brls::ControllerState controller);
     static short glfwKeyToVKKey(brls::BrlsKeyboardScancode key);
     void sendRelativeMouseMove(brls::Point offset);
+    void handleDesktopMouseScroll(brls::Point scroll);
+    void sendDesktopMouseScroll(brls::Point scroll);
 
     GamepadState getControllerState(int controllerNum, bool specialKey);
     void handleControllers(bool specialKey);

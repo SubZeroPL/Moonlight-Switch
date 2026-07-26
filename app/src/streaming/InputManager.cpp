@@ -8,13 +8,18 @@
 #include "Settings.hpp"
 #include <borealis.hpp>
 #include <streaming_view.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 
 using namespace brls;
 
 namespace {
 constexpr float STICK_SCROLL_DEADZONE = 0.2f;
+constexpr float MOONLIGHT_WHEEL_DELTA = 120.0f;
+constexpr auto DESKTOP_SCROLL_GESTURE_TIMEOUT =
+    std::chrono::milliseconds(600);
 
 float applyStickScrollDeadzone(float axis, float configuredDeadzone) {
     float deadzone = std::fmax(STICK_SCROLL_DEADZONE, configuredDeadzone);
@@ -55,15 +60,7 @@ MoonlightInputManager::MoonlightInputManager() {
         ->getMouseScrollOffsetChanged()
         ->subscribe([this](brls::Point scroll) {
             if (!inputEnabled) return;
-
-            if (scroll.x != 0) {
-                brls::Logger::info("Mouse scroll X sended: {}", scroll.x);
-                LiSendHighResHScrollEvent( short(scroll.x));
-            }
-            if (scroll.y != 0) {
-                brls::Logger::info("Mouse scroll Y sended: {}", scroll.y);
-                LiSendHighResScrollEvent( short(scroll.y));
-            }
+            handleDesktopMouseScroll(scroll);
         });
 
     inputManager
@@ -96,6 +93,81 @@ MoonlightInputManager::MoonlightInputManager() {
                     break;
             }
         });
+}
+
+void MoonlightInputManager::handleDesktopMouseScroll(brls::Point scroll) {
+    const auto now = std::chrono::steady_clock::now();
+    if (lastDesktopScrollEvent.time_since_epoch().count() == 0 ||
+        now - lastDesktopScrollEvent > DESKTOP_SCROLL_GESTURE_TIMEOUT) {
+        desktopScrollAxis = DesktopScrollAxis::None;
+        pendingHorizontalScroll = 0;
+        pendingHorizontalScrollEvents = 0;
+    }
+    lastDesktopScrollEvent = now;
+
+    // Trackpads frequently emit a small perpendicular component. Some virtual
+    // mouse drivers quantize that component into a full wheel tick, so lock a
+    // gesture to one axis instead of forwarding diagonal jitter to the host.
+    if (scroll.y != 0 &&
+        (scroll.x == 0 || std::fabs(scroll.y) >= std::fabs(scroll.x))) {
+        desktopScrollAxis = DesktopScrollAxis::Vertical;
+        pendingHorizontalScroll = 0;
+        pendingHorizontalScrollEvents = 0;
+        sendDesktopMouseScroll({0, scroll.y});
+        return;
+    }
+
+    if (scroll.x == 0 || desktopScrollAxis == DesktopScrollAxis::Vertical)
+        return;
+
+    if (desktopScrollAxis == DesktopScrollAxis::None) {
+        pendingHorizontalScroll += scroll.x;
+        pendingHorizontalScrollEvents++;
+
+        // A single isolated horizontal tick is normally diagonal jitter.
+        // Buffer it until a second tick confirms an intentional gesture.
+        if (pendingHorizontalScrollEvents < 2)
+            return;
+
+        desktopScrollAxis = DesktopScrollAxis::Horizontal;
+        scroll.x = pendingHorizontalScroll;
+        pendingHorizontalScroll = 0;
+        pendingHorizontalScrollEvents = 0;
+    }
+
+    sendDesktopMouseScroll({scroll.x, 0});
+}
+
+void MoonlightInputManager::sendDesktopMouseScroll(brls::Point scroll) {
+    desktopScrollRemainder.x += scroll.x * MOONLIGHT_WHEEL_DELTA;
+    desktopScrollRemainder.y += scroll.y * MOONLIGHT_WHEEL_DELTA;
+
+    const int horizontal = std::clamp(
+        static_cast<int>(std::trunc(desktopScrollRemainder.x)),
+        static_cast<int>(std::numeric_limits<short>::min()),
+        static_cast<int>(std::numeric_limits<short>::max()));
+    const int vertical = std::clamp(
+        static_cast<int>(std::trunc(desktopScrollRemainder.y)),
+        static_cast<int>(std::numeric_limits<short>::min()),
+        static_cast<int>(std::numeric_limits<short>::max()));
+
+    if (horizontal != 0) {
+        desktopScrollRemainder.x -= horizontal;
+        const int result =
+            LiSendHighResHScrollEvent(static_cast<short>(horizontal));
+        if (result < 0)
+            brls::Logger::warning(
+                "Failed to queue horizontal mouse scroll: {}", result);
+    }
+
+    if (vertical != 0) {
+        desktopScrollRemainder.y -= vertical;
+        const int result =
+            LiSendHighResScrollEvent(static_cast<short>(vertical));
+        if (result < 0)
+            brls::Logger::warning(
+                "Failed to queue vertical mouse scroll: {}", result);
+    }
 }
 
 void MoonlightInputManager::sendRelativeMouseMove(brls::Point offset) {
@@ -181,6 +253,11 @@ void MoonlightInputManager::dropInput() {
         return;
 
     desktopMouseRemainder = {0, 0};
+    desktopScrollRemainder = {0, 0};
+    pendingHorizontalScroll = 0;
+    pendingHorizontalScrollEvents = 0;
+    desktopScrollAxis = DesktopScrollAxis::None;
+    lastDesktopScrollEvent = {};
 
     bool res = true;
     // Drop gamepad state
