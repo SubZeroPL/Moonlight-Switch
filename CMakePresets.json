@@ -7,6 +7,27 @@
   },
   "configurePresets": [
     {
+      "name": "linux-release",
+      "displayName": "Portable Linux Release",
+      "description": "Native Linux release build with SDL3, embedded resources, and required VA-API H.264/HEVC decoding.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "/usr",
+        "PLATFORM_DESKTOP": "ON",
+        "MOONLIGHT_DESKTOP_USE_SYSTEM_PACKAGES": "ON",
+        "MOONLIGHT_DESKTOP_EMBED_RESOURCES": "ON",
+        "MOONLIGHT_LINUX_REQUIRE_VAAPI": "ON",
+        "USE_SDL3": "ON"
+      }
+    },
+    {
       "name": "windows-ucrt64-base",
       "hidden": true,
       "generator": "Ninja",
@@ -82,6 +103,10 @@
     }
   ],
   "buildPresets": [
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
     {
       "name": "windows-ucrt64-release",
       "configurePreset": "windows-ucrt64-release"

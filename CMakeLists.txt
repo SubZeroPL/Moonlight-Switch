@@ -55,6 +55,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${EXTERN_PATH}/cmake")
 
 # project info
 project(Moonlight)
+include(GNUInstallDirs)
 if (APPLE AND USE_SDL3)
     enable_language(OBJC)
 endif ()
@@ -77,6 +78,14 @@ set(PSN_VERSION  "01.00")
 set(PROJECT_AUTHOR "XITRIX")
 set(PROJECT_ICON ${CMAKE_CURRENT_SOURCE_DIR}/resources/img/moonlight_icon.jpg)
 set(PROJECT_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/resources)
+
+if (PLATFORM_DESKTOP AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT USE_LIBROMFS)
+    # Borealis appends "/resources/" to this prefix. This keeps non-embedded
+    # installed builds FHS-compliant instead of depending on their working
+    # directory.
+    set(BRLS_RESOURCES_DIR "${CMAKE_INSTALL_FULL_DATADIR}/moonlight-switch"
+        CACHE STRING "Installed Borealis resource prefix" FORCE)
+endif ()
 
 function(moonlight_define_multi_sdk_mbedtls_targets)
     if (TARGET MbedTLS::mbedcrypto)
@@ -337,10 +346,18 @@ if (PLATFORM_DESKTOP)
         )
     endif ()
 
-    set_target_properties(${PROJECT_NAME} PROPERTIES
-        INSTALL_RPATH "@executable_path/../Frameworks"
-        XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/../Frameworks"
-    )
+    if (APPLE)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            INSTALL_RPATH "@executable_path/../Frameworks"
+            XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/../Frameworks")
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # linuxdeploy and the portable tarball put private dependencies in
+        # ../lib relative to the executable. Native packages can leave that
+        # directory empty and continue using system libraries.
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            INSTALL_RPATH "\$ORIGIN/../lib"
+            BUILD_WITH_INSTALL_RPATH OFF)
+    endif ()
 
     if (NOT USE_LIBROMFS)
         add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}.data)
@@ -543,11 +560,83 @@ else ()
 
         find_library(SWRESAMPLE_LIBRARY swresample)
         message("swresample: ${SWRESAMPLE_LIBRARY}")
+
+        get_filename_component(_moonlight_ffmpeg_library_dir
+            "${AVCODEC_LIBRARY}" DIRECTORY)
+        get_filename_component(_moonlight_ffmpeg_prefix
+            "${_moonlight_ffmpeg_library_dir}/../.." ABSOLUTE)
+        find_path(MOONLIGHT_FFMPEG_INCLUDE_DIR
+            NAMES libavcodec/avcodec.h
+            HINTS "${_moonlight_ffmpeg_prefix}/include"
+            PATH_SUFFIXES "${CMAKE_LIBRARY_ARCHITECTURE}")
+        if (NOT MOONLIGHT_FFMPEG_INCLUDE_DIR)
+            message(FATAL_ERROR "Could not locate the FFmpeg development headers")
+        endif ()
+        target_include_directories(${PROJECT_NAME} PRIVATE
+            "${MOONLIGHT_FFMPEG_INCLUDE_DIR}")
+
         list(APPEND MOONLIGHT_APP_FFMPEG_LIBS
             ${AVCODEC_LIBRARY}
             ${AVUTIL_LIBRARY}
             ${AVFORMAT_LIBRARY}
             ${SWRESAMPLE_LIBRARY})
+
+        if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+            PLATFORM_DESKTOP AND MOONLIGHT_LINUX_REQUIRE_VAAPI)
+            include(CheckCSourceRuns)
+            set(_moonlight_saved_required_libraries "${CMAKE_REQUIRED_LIBRARIES}")
+            set(_moonlight_saved_required_includes "${CMAKE_REQUIRED_INCLUDES}")
+            set(CMAKE_REQUIRED_LIBRARIES
+                "${AVCODEC_LIBRARY};${AVUTIL_LIBRARY}")
+            set(CMAKE_REQUIRED_INCLUDES "${MOONLIGHT_FFMPEG_INCLUDE_DIR}")
+            unset(MOONLIGHT_FFMPEG_HAS_REQUIRED_VAAPI CACHE)
+            check_c_source_runs([=[
+                #include <libavcodec/avcodec.h>
+                #include <libavutil/hwcontext.h>
+
+                static int codec_supports_vaapi(enum AVCodecID id) {
+                    const AVCodec *codec = avcodec_find_decoder(id);
+                    if (codec == 0) {
+                        return 0;
+                    }
+
+                    for (int index = 0; ; ++index) {
+                        const AVCodecHWConfig *config =
+                            avcodec_get_hw_config(codec, index);
+                        if (config == 0) {
+                            return 0;
+                        }
+                        if (config->device_type == AV_HWDEVICE_TYPE_VAAPI &&
+                            (config->methods &
+                             AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0) {
+                            return 1;
+                        }
+                    }
+                }
+
+                int main(void) {
+                    return codec_supports_vaapi(AV_CODEC_ID_H264) &&
+                                   codec_supports_vaapi(AV_CODEC_ID_HEVC)
+                               ? 0
+                               : 1;
+                }
+            ]=] MOONLIGHT_FFMPEG_HAS_REQUIRED_VAAPI)
+            set(CMAKE_REQUIRED_LIBRARIES "${_moonlight_saved_required_libraries}")
+            set(CMAKE_REQUIRED_INCLUDES "${_moonlight_saved_required_includes}")
+            unset(_moonlight_saved_required_libraries)
+            unset(_moonlight_saved_required_includes)
+
+            if (NOT MOONLIGHT_FFMPEG_HAS_REQUIRED_VAAPI)
+                message(FATAL_ERROR
+                    "The selected FFmpeg libraries do not expose VA-API "
+                    "hardware configurations for both H.264 and HEVC. "
+                    "Install a VA-API-enabled FFmpeg build or configure with "
+                    "-DMOONLIGHT_LINUX_REQUIRE_VAAPI=OFF for a developer-only "
+                    "software-decoding build.")
+            endif ()
+        endif ()
+        unset(_moonlight_ffmpeg_library_dir)
+        unset(_moonlight_ffmpeg_prefix)
     endif ()
 
     find_library(ZSTD_LIBRARY zstd)
@@ -648,6 +737,44 @@ elseif (PLATFORM_PSV)
         SceAudiodec_stub
         SceVideodec_stub
         SceCodecEngine_stub)
+endif ()
+
+if (PLATFORM_DESKTOP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    install(TARGETS ${PROJECT_NAME}
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        COMPONENT Runtime)
+
+    if (NOT USE_LIBROMFS)
+        install(DIRECTORY "${PROJECT_RESOURCES}/"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/moonlight-switch/resources"
+            COMPONENT Runtime)
+    endif ()
+
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/app/platforms/linux/ru.xitrix.Moonlight.desktop"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
+        COMPONENT Runtime)
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/img/moonlight_96.png"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/96x96/apps"
+        RENAME "ru.xitrix.Moonlight.png"
+        COMPONENT Runtime)
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/ru.xitrix.Moonlight.metainfo.xml"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo"
+        COMPONENT Runtime)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/moonlight-switch"
+        COMPONENT Runtime)
+
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/app/platforms/linux/ru.xitrix.Moonlight.metainfo.xml.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/ru.xitrix.Moonlight.metainfo.xml"
+        @ONLY)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/app/platforms/linux/package-info.env.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/package-info.env"
+        @ONLY)
 endif ()
 
 if (WIN32 AND PLATFORM_DESKTOP AND MOONLIGHT_DESKTOP_USE_SYSTEM_PACKAGES AND

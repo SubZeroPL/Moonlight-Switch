@@ -1,11 +1,22 @@
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 
 function(check_libromfs_generator)
-    if (NOT DEFINED LIBROMFS_PREBUILT_GENERATOR OR NOT EXISTS "${LIBROMFS_PREBUILT_GENERATOR}")
+    if (LIBROMFS_PREBUILT_GENERATOR)
+        if (NOT EXISTS "${LIBROMFS_PREBUILT_GENERATOR}")
+            message(FATAL_ERROR "LIBROMFS_PREBUILT_GENERATOR does not exist: ${LIBROMFS_PREBUILT_GENERATOR}")
+        endif ()
+        return()
+    endif ()
+
+    # Native builds can build and execute libromfs-generator as a normal CMake
+    # target. Only cross builds need a separate executable built for the host.
+    # Do not automatically use a repository-root generator here: that file may
+    # have been produced on a different operating system or architecture.
+    if (CMAKE_CROSSCOMPILING)
         if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libromfs-generator")
             set(LIBROMFS_PREBUILT_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/libromfs-generator" PARENT_SCOPE)
         else ()
-            message(FATAL_ERROR "libromfs-generator has not been built, please refer to borealis/build_libromfs_generator.sh for more information")
+            message(FATAL_ERROR "Cross-compiling with libromfs requires a host LIBROMFS_PREBUILT_GENERATOR; refer to build_libromfs_generator.sh")
         endif ()
     endif()
 endfunction()
@@ -270,7 +281,12 @@ if (PLATFORM_DESKTOP)
     endif ()
 
     if (_moonlight_use_system_desktop_packages)
-        set(USE_LIBROMFS OFF)
+        if (MOONLIGHT_DESKTOP_EMBED_RESOURCES)
+            set(USE_LIBROMFS ON)
+            check_libromfs_generator()
+        else ()
+            set(USE_LIBROMFS OFF)
+        endif ()
 
         set(_moonlight_system_prefix "${MOONLIGHT_DESKTOP_SYSTEM_PREFIX}")
         if (_moonlight_system_prefix STREQUAL "")

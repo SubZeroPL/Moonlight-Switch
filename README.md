@@ -178,6 +178,17 @@ surfaces and copies NV12, P010, or YUV420P frames back for the OpenGL renderer.
 If no compatible device or driver is available, Moonlight automatically falls
 back to software decoding.
 
+#### Linux and SteamOS releases
+
+Linux release builds are available for x86_64 and ARM64 as AppImage, portable
+tar, DEB, and RPM packages. SteamOS builds target Valve's Steam Linux Runtime 4.
+The Linux release configuration embeds resources and requires a VA-API-enabled
+FFmpeg with H.264 and HEVC hardware configurations.
+
+See the [Linux and SteamOS build and installation guide](docs/linux-distribution.md)
+for package selection, Steam Deck setup, local build commands, and the GitHub
+Actions matrix.
+
 #### Windows (MSYS2)
 
 Windows desktop builds are supported through MSYS2 system packages for both x64 and ARM64.

@@ -25,6 +25,8 @@ unset(_moonlight_enable_upscaling_default)
 
 option(MOONLIGHT_DESKTOP_USE_SYSTEM_PACKAGES "Use system-installed desktop dependencies instead of the bundled vcpkg toolchain" OFF)
 set(MOONLIGHT_DESKTOP_SYSTEM_PREFIX "" CACHE PATH "Optional prefix to prepend when resolving desktop system packages")
+option(MOONLIGHT_DESKTOP_EMBED_RESOURCES "Embed desktop resources into the executable with libromfs" OFF)
+option(MOONLIGHT_LINUX_REQUIRE_VAAPI "Fail Linux desktop configuration unless FFmpeg supports VA-API H.264 and HEVC decoding" OFF)
 
 # Windows Only
 cmake_dependent_option(WIN32_TERMINAL "Show terminal when run on Windows" ON "WIN32" OFF)
